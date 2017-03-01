@@ -1,8 +1,10 @@
 'use strict'
 
-const events = require( 'events' )
-const util = require( 'util' )
-const pckg = require( '../package.json' )
+const events = require('events')
+const pckg = require('../package.json')
+const fs = require('fs')
+
+const TOPIC = '_cache_'
 
 /**
  * A template that can be forked to create cache or storage connectors
@@ -62,11 +64,59 @@ class Connector extends events.EventEmitter {
   *
   * @constructor
   */
-  constructor( options ) {
+  constructor (options) {
     super()
     this.isReady = false
     this.name = pckg.name
     this.version = pckg.version
+    this.data = {}
+
+    let afterOpen = () => {
+      this.messageConnector = options.messageConnector
+      if (this.messageConnector) {
+        this.cb = this.cacheCallback.bind(this)
+        this.refreshTopic = 'refresh' + Math.floor(Math.random() * 1e9).toString(16)
+        this.messageConnector.subscribe(this.refreshTopic, this.cb)
+        this.messageConnector.subscribe(TOPIC, this.cb)
+        this.messageConnector.publish(TOPIC, {refresh: this.refreshId})
+      }
+
+      this.isReady = true
+      this.emit('ready')
+    }
+
+    this.filename = options.filename
+    if (this.filename) {
+      this.flushInterval = options.flushInterval || 5000
+      fs.readFile(this.filename, 'utf8', (err, data) => {
+        if (err) {
+          console.error(err.message)
+        } else {
+          try {
+            this.data = JSON.parse(data)
+          } catch (e) { console.error(e.message) }
+        }
+        afterOpen()
+      })
+    } else {
+      process.nextTick(afterOpen)
+    }
+  }
+
+  cacheCallback (msg) {
+    if (msg.refresh) {
+      // re-publish all own records
+      Object.keys(this.data).forEach(key => {
+        this.messageConnector.publish(msg.refresh, {key: key, value: this.data[key]})
+      })
+      return
+    }
+
+    if (msg.value === undefined) {
+      delete this.data[msg.key]
+    } else {
+      this.data[msg.key] = msg.value
+    }
   }
 
   /**
@@ -79,8 +129,19 @@ class Connector extends events.EventEmitter {
   * @private
   * @returns {void}
   */
-  set( key, value, callback ) {
-
+  set (key, value, callback) {
+    if (value === undefined) {
+      delete this.data[key]
+    } else {
+      this.data[key] = value
+    }
+    if (this.messageConnector) this.messageConnector.publish(TOPIC, {key: key, value: value})
+    if (this.filename) {
+      if (!this.saveTimeout) {
+        this.saveTimeout = setTimeout(this._save.bind(this), this.flushInterval)
+      }
+    }
+    callback(null)
   }
 
   /**
@@ -92,8 +153,8 @@ class Connector extends events.EventEmitter {
   *
   * @returns {void}
   */
-  get( key, callback ) {
-
+  get (key, callback) {
+    callback(null, this.data[key])
   }
 
   /**
@@ -105,8 +166,8 @@ class Connector extends events.EventEmitter {
   *
   * @returns {void}
   */
-  delete( key, callback ) {
-
+  delete (key, callback) {
+    this.set(key, undefined, callback)
   }
 
   /**
@@ -120,8 +181,24 @@ class Connector extends events.EventEmitter {
    * @public
    * @returns {void}
    */
-  close() {
+  close () {
+    if (this.messageConnector) {
+      this.messageConnector.unsubscribe(this.refreshTopic, this.cb)
+      this.messageConnector.unsubscribe(TOPIC, this.cb)
+    }
+    if (!this.filename) return this.emit('close')
+    this._save(() => {
+      this.emit('close')
+    })
+  }
 
+  _save (callback) {
+    if (!this.filename) return callback && callback()
+    this.saveTimeout = null
+    fs.writeFile(this.filename, JSON.stringify(this.data), 'utf8', (err) => {
+      if (err) console.error(err.message)
+      if (callback) callback()
+    })
   }
 }
 

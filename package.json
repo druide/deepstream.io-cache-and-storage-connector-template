@@ -1,7 +1,7 @@
 {
-  "name": "deepstream.io-cache-and-storage-connector-template",
+  "name": "deepstream.io-cache-simple-cluster",
   "version": "1.0.1",
-  "description": "A template that can be forked to create new cache and storage connectors for deepstream.io",
+  "description": "[deepstream](http://deepstream.io) In-memory distibuted cache",
   "main": "src/connector.js",
   "scripts": {
     "test": "mocha",
@@ -11,12 +11,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/deepstreamIO/deepstream.io-cache-and-storage-connector-template.git"
+    "url": "https://github.com/druide/deepstream.io-cache-simple-cluster.git"
   },
   "author": "deepstreamHub GmbH",
   "license": "Apache-2.0",
   "bugs": {
-    "url": "https://github.com/deepstreamIO/deepstream.io-cache-and-storage-connector-template/issues"
+    "url": "https://github.com/druide/deepstream.io-cache-simple-cluster/issues"
   },
   "homepage": "http://deepstream.io",
   "dependencies": {},

@@ -3,6 +3,7 @@
 const events = require('events')
 const pckg = require('../package.json')
 const fs = require('fs')
+const C = require('deepstream.io').constants
 
 const TOPIC = '_cache_'
 
@@ -69,16 +70,19 @@ class Connector extends events.EventEmitter {
     this.isReady = false
     this.name = pckg.name
     this.version = pckg.version
-    this.data = {}
+    this.data = {_v: 0}
+
+    this.messageConnector = options.server ? options.server._options.messageConnector : null
+    this.logger = options.server ? options.server._options.logger : null
 
     let afterOpen = () => {
-      this.messageConnector = options.messageConnector
       if (this.messageConnector) {
         this.cb = this.cacheCallback.bind(this)
+        this.refreshCb = this.refreshCacheCallback.bind(this)
         this.refreshTopic = 'refresh' + Math.floor(Math.random() * 1e9).toString(16)
-        this.messageConnector.subscribe(this.refreshTopic, this.cb)
+        this.messageConnector.subscribe(this.refreshTopic, this.refreshCb)
         this.messageConnector.subscribe(TOPIC, this.cb)
-        this.messageConnector.publish(TOPIC, {refresh: this.refreshId})
+        setTimeout(this.anientropy.bind(this), 1000)
       }
 
       this.isReady = true
@@ -90,11 +94,11 @@ class Connector extends events.EventEmitter {
       this.flushInterval = options.flushInterval || 5000
       fs.readFile(this.filename, 'utf8', (err, data) => {
         if (err) {
-          console.error(err.message)
+          if (err.code !== 'ENOENT') this.log(C.LOG_LEVEL.ERROR, C.EVENT.PLUGIN_INITIALIZATION_ERROR, err.message)
         } else {
           try {
             this.data = JSON.parse(data)
-          } catch (e) { console.error(e.message) }
+          } catch (e) { this.log(C.LOG_LEVEL.ERROR, C.EVENT.PLUGIN_INITIALIZATION_ERROR, e.message) }
         }
         afterOpen()
       })
@@ -103,19 +107,60 @@ class Connector extends events.EventEmitter {
     }
   }
 
+  log (level, type, message) {
+    if (this.logger) {
+      this.logger.log(level, type, message)
+    } else {
+      console.log(message)
+    }
+  }
+
+  anientropy () {
+    this.messageConnector.publish(TOPIC, {refresh: this.refreshTopic, _v: this.data._v})
+  }
+
   cacheCallback (msg) {
     if (msg.refresh) {
       // re-publish all own records
-      Object.keys(this.data).forEach(key => {
-        this.messageConnector.publish(msg.refresh, {key: key, value: this.data[key]})
-      })
+      if (msg._v < this.data._v) {
+        Object.keys(this.data).forEach(key => {
+          if (key !== '_v') this.messageConnector.publish(msg.refresh, {key: key, value: this.data[key], _v: this.data._v})
+        })
+      }
       return
+    }
+
+    if (msg._v !== this.data._v + 1) {
+      this.log(C.LOG_LEVEL.WARN, C.EVENT.INVALID_VERSION, `Version missmatch, local=${this.data._v}, remote=${msg._v}.`)
+      return this.anientropy()
     }
 
     if (msg.value === undefined) {
       delete this.data[msg.key]
     } else {
       this.data[msg.key] = msg.value
+    }
+    this.data._v = msg._v
+
+    if (this.filename) {
+      if (!this.saveTimeout) {
+        this.saveTimeout = setTimeout(this._save.bind(this), this.flushInterval)
+      }
+    }
+  }
+
+  refreshCacheCallback (msg) {
+    if (msg.value === undefined) {
+      delete this.data[msg.key]
+    } else {
+      this.data[msg.key] = msg.value
+    }
+    this.data._v = msg._v
+
+    if (this.filename) {
+      if (!this.saveTimeout) {
+        this.saveTimeout = setTimeout(this._save.bind(this), this.flushInterval)
+      }
     }
   }
 
@@ -135,7 +180,8 @@ class Connector extends events.EventEmitter {
     } else {
       this.data[key] = value
     }
-    if (this.messageConnector) this.messageConnector.publish(TOPIC, {key: key, value: value})
+    this.data._v++
+    if (this.messageConnector) this.messageConnector.publish(TOPIC, {key: key, value: value, _v: this.data._v})
     if (this.filename) {
       if (!this.saveTimeout) {
         this.saveTimeout = setTimeout(this._save.bind(this), this.flushInterval)
@@ -183,7 +229,7 @@ class Connector extends events.EventEmitter {
    */
   close () {
     if (this.messageConnector) {
-      this.messageConnector.unsubscribe(this.refreshTopic, this.cb)
+      this.messageConnector.unsubscribe(this.refreshTopic, this.refreshCb)
       this.messageConnector.unsubscribe(TOPIC, this.cb)
     }
     if (!this.filename) return this.emit('close')
@@ -193,10 +239,9 @@ class Connector extends events.EventEmitter {
   }
 
   _save (callback) {
-    if (!this.filename) return callback && callback()
     this.saveTimeout = null
     fs.writeFile(this.filename, JSON.stringify(this.data), 'utf8', (err) => {
-      if (err) console.error(err.message)
+      if (err) this.log(C.LOG_LEVEL.ERROR, C.EVENT.PLUGIN_ERROR, err.message)
       if (callback) callback()
     })
   }

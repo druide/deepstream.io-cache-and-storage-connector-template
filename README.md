@@ -20,7 +20,7 @@ let messageConnector = new ZMQConnector({
 server.set('messageConnector', messageConnector)
 
 let cacheConnector = new CacheClusterConnector({
-  messageConnector: messageConnector,
+  server: server,
   filename: './data/3001.json'
 })
 server.set('cache', cacheConnector)
@@ -30,6 +30,6 @@ server.start()
 
 ## Config
 
-- messageConnector - deepstream's message connector instance. When omited, cache will work as local only.
+- server - deepstream server instance. When omited, cache will work as local only.
 - filename - filename of JSON cache shapshot. Path for this file must already exists.
 - flushInterval - interval between file writes, ms. Default 10000

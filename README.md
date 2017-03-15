@@ -14,14 +14,15 @@ const server = new DeepstreamServer({
 })
 
 let messageConnector = new ZMQConnector({
-  pubAddress: 'tcp://localhost:3001',
-  subAddress: 'tcp://localhost:3002'
+  address: 'tcp://localhost:3001',
+  peers: ['tcp://localhost:3002']
 })
 server.set('messageConnector', messageConnector)
 
 let cacheConnector = new CacheClusterConnector({
   server: server,
-  filename: './data/3001.json'
+  filename: './data/3001.json',
+  flushInterval: 60000
 })
 server.set('cache', cacheConnector)
 
@@ -32,4 +33,4 @@ server.start()
 
 - server - deepstream server instance. When omited, cache will work as local only.
 - filename - filename of JSON cache shapshot. Path for this file must already exists.
-- flushInterval - interval between file writes, ms. Default 10000
+- flushInterval - interval between file writes, ms. Default 30000

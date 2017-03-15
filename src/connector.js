@@ -91,7 +91,7 @@ class Connector extends events.EventEmitter {
 
     this.filename = options.filename
     if (this.filename) {
-      this.flushInterval = options.flushInterval || 5000
+      this.flushInterval = options.flushInterval || 30000
       fs.readFile(this.filename, 'utf8', (err, data) => {
         if (err) {
           if (err.code !== 'ENOENT') this.log(C.LOG_LEVEL.ERROR, C.EVENT.PLUGIN_INITIALIZATION_ERROR, err.message)
@@ -142,10 +142,8 @@ class Connector extends events.EventEmitter {
     }
     this.data._v = msg._v
 
-    if (this.filename) {
-      if (!this.saveTimeout) {
-        this.saveTimeout = setTimeout(this._save.bind(this), this.flushInterval)
-      }
+    if (this.filename && !this.saveTimeout) {
+      this.saveTimeout = setTimeout(this._save.bind(this), this.flushInterval)
     }
   }
 
@@ -157,10 +155,8 @@ class Connector extends events.EventEmitter {
     }
     this.data._v = msg._v
 
-    if (this.filename) {
-      if (!this.saveTimeout) {
-        this.saveTimeout = setTimeout(this._save.bind(this), this.flushInterval)
-      }
+    if (this.filename && !this.saveTimeout) {
+      this.saveTimeout = setTimeout(this._save.bind(this), this.flushInterval)
     }
   }
 
@@ -182,10 +178,8 @@ class Connector extends events.EventEmitter {
     }
     this.data._v++
     if (this.messageConnector) this.messageConnector.publish(TOPIC, {key: key, value: value, _v: this.data._v})
-    if (this.filename) {
-      if (!this.saveTimeout) {
-        this.saveTimeout = setTimeout(this._save.bind(this), this.flushInterval)
-      }
+    if (this.filename && !this.saveTimeout) {
+      this.saveTimeout = setTimeout(this._save.bind(this), this.flushInterval)
     }
     callback(null)
   }

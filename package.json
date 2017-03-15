@@ -1,6 +1,6 @@
 {
   "name": "deepstream.io-cache-simple-cluster",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "[deepstream](http://deepstream.io) In-memory distibuted cache",
   "main": "src/connector.js",
   "scripts": {
@@ -19,7 +19,9 @@
     "url": "https://github.com/druide/deepstream.io-cache-simple-cluster/issues"
   },
   "homepage": "http://deepstream.io",
-  "dependencies": {},
+  "dependencies": {
+    "deepstream.io": "^2.1.3"
+  },
   "devDependencies": {
     "chai": "^3.5.0",
     "coveralls": "^2.11.9",

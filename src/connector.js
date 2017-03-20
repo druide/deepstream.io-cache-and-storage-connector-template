@@ -4,8 +4,7 @@ const events = require('events')
 const pckg = require('../package.json')
 const fs = require('fs')
 const C = require('deepstream.io').constants
-
-const TOPIC = '_cache_'
+const JsonPath = require('deepstream.io/src/record/json-path')
 
 /**
  * A template that can be forked to create cache or storage connectors
@@ -70,19 +69,15 @@ class Connector extends events.EventEmitter {
     this.isReady = false
     this.name = pckg.name
     this.version = pckg.version
-    this.data = {_v: 0}
+    this.data = {}
 
-    this.messageConnector = options.server ? options.server._options.messageConnector : null
-    this.logger = options.server ? options.server._options.logger : null
+    this.server = options.server
+    this.messageConnector = this.server ? this.server._options.messageConnector : null
 
     let afterOpen = () => {
       if (this.messageConnector) {
-        this.cb = this.cacheCallback.bind(this)
-        this.refreshCb = this.refreshCacheCallback.bind(this)
-        this.refreshTopic = 'refresh' + Math.floor(Math.random() * 1e9).toString(16)
-        this.messageConnector.subscribe(this.refreshTopic, this.refreshCb)
-        this.messageConnector.subscribe(TOPIC, this.cb)
-        setTimeout(this.anientropy.bind(this), 1000)
+        this.cb = this.recordCallback.bind(this)
+        this.messageConnector.subscribe(C.TOPIC.RECORD, this.cb)
       }
 
       this.isReady = true
@@ -94,11 +89,13 @@ class Connector extends events.EventEmitter {
       this.flushInterval = options.flushInterval || 30000
       fs.readFile(this.filename, 'utf8', (err, data) => {
         if (err) {
-          if (err.code !== 'ENOENT') this.log(C.LOG_LEVEL.ERROR, C.EVENT.PLUGIN_INITIALIZATION_ERROR, err.message)
+          if (err.code !== 'ENOENT') return this.emit('error', err)
         } else {
           try {
             this.data = JSON.parse(data)
-          } catch (e) { this.log(C.LOG_LEVEL.ERROR, C.EVENT.PLUGIN_INITIALIZATION_ERROR, e.message) }
+          } catch (e) {
+            return this.emit('error', err)
+          }
         }
         afterOpen()
       })
@@ -107,56 +104,29 @@ class Connector extends events.EventEmitter {
     }
   }
 
-  log (level, type, message) {
-    if (this.logger) {
-      this.logger.log(level, type, message)
-    } else {
-      console.log(message)
-    }
-  }
-
-  anientropy () {
-    this.messageConnector.publish(TOPIC, {refresh: this.refreshTopic, _v: this.data._v})
-  }
-
-  cacheCallback (msg) {
-    if (msg.refresh) {
-      // re-publish all own records
-      if (msg._v < this.data._v) {
-        Object.keys(this.data).forEach(key => {
-          if (key !== '_v') this.messageConnector.publish(msg.refresh, {key: key, value: this.data[key], _v: this.data._v})
-        })
-      }
-      return
-    }
-
-    if (msg._v !== this.data._v + 1) {
-      this.log(C.LOG_LEVEL.WARN, C.EVENT.INVALID_VERSION, `Version missmatch, local=${this.data._v}, remote=${msg._v}.`)
-      return this.anientropy()
-    }
-
-    if (msg.value === undefined) {
-      delete this.data[msg.key]
-    } else {
-      this.data[msg.key] = msg.value
-    }
-    this.data._v = msg._v
-
-    if (this.filename && !this.saveTimeout) {
-      this.saveTimeout = setTimeout(this._save.bind(this), this.flushInterval)
-    }
-  }
-
-  refreshCacheCallback (msg) {
-    if (msg.value === undefined) {
-      delete this.data[msg.key]
-    } else {
-      this.data[msg.key] = msg.value
-    }
-    this.data._v = msg._v
-
-    if (this.filename && !this.saveTimeout) {
-      this.saveTimeout = setTimeout(this._save.bind(this), this.flushInterval)
+  /**
+   * Record listener to update records by messages from other deepstream nodes
+   * @param  {Object} msg
+   */
+  recordCallback (msg) {
+    let key = msg.data[0]
+    let version = parseInt(msg.data[1], 10)
+    if (msg.action === C.ACTIONS.PATCH) {
+      let path = msg.data[2]
+      let value = this.server.convertTyped(msg.data[3])
+      if (!this.data[key]) this.data[key] = {_d: {}}
+      new JsonPath(path).setValue(this.data[key]._d, value)
+      this.data[key]._v = version
+      this.sheduleSave()
+    } else if (msg.action === C.ACTIONS.UPDATE) {
+      let value = this.server.convertTyped(msg.data[2])
+      if (!this.data[key]) this.data[key] = {}
+      this.data[key]._d = value
+      this.data[key]._v = version
+      this.sheduleSave()
+    } else if (msg.action === C.ACTIONS.DELETE) {
+      if (this.data[key]) delete this.data[key]
+      this.sheduleSave()
     }
   }
 
@@ -176,11 +146,7 @@ class Connector extends events.EventEmitter {
     } else {
       this.data[key] = value
     }
-    this.data._v++
-    if (this.messageConnector) this.messageConnector.publish(TOPIC, {key: key, value: value, _v: this.data._v})
-    if (this.filename && !this.saveTimeout) {
-      this.saveTimeout = setTimeout(this._save.bind(this), this.flushInterval)
-    }
+    this.sheduleSave()
     callback(null)
   }
 
@@ -223,19 +189,31 @@ class Connector extends events.EventEmitter {
    */
   close () {
     if (this.messageConnector) {
-      this.messageConnector.unsubscribe(this.refreshTopic, this.refreshCb)
-      this.messageConnector.unsubscribe(TOPIC, this.cb)
+      this.messageConnector.unsubscribe(C.TOPIC.RECORD, this.cb)
     }
     if (!this.filename) return this.emit('close')
-    this._save(() => {
+    this.save(() => {
       this.emit('close')
     })
   }
 
-  _save (callback) {
+  /**
+   * Shedule save data to file if not in progress yet
+   */
+  sheduleSave () {
+    if (this.filename && !this.saveTimeout) {
+      this.saveTimeout = setTimeout(this.save.bind(this), this.flushInterval)
+    }
+  }
+
+  /**
+   * Save data to file
+   * @param  {Function} callback
+   */
+  save (callback) {
     this.saveTimeout = null
     fs.writeFile(this.filename, JSON.stringify(this.data), 'utf8', (err) => {
-      if (err) this.log(C.LOG_LEVEL.ERROR, C.EVENT.PLUGIN_ERROR, err.message)
+      if (err) this.emit('error', err)
       if (callback) callback()
     })
   }

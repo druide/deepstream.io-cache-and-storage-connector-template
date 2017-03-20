@@ -25,6 +25,8 @@
   "devDependencies": {
     "chai": "^3.5.0",
     "coveralls": "^2.11.9",
+    "deepstream.io-client-js": "^2.1.2",
+    "deepstream.io-msg-zmq": "git://github.com/druide/deepstream.io-msg-zmq.git",
     "eslint": "^2.11.1",
     "eslint-config-airbnb": "^3.1.0",
     "istanbul": "^0.4.3",
